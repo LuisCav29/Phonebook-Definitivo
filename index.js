@@ -1,106 +1,118 @@
 const express = require('express');
-const morgan = require('morgan');
 const cors = require('cors');
-const path = require('path');
-
 const app = express();
-app.use(express.json());
-app.use(cors());
+const mongoose = require('mongoose');
+require('dotenv').config();
 
-const requestLogger = (req, res, next) => {
-  console.log('Method:', req.method);
-  console.log('Path:  ', req.path);
-  console.log('Body:  ', req.body);
-  console.log('---');
-  next();
+const port = process.env.PORT || 3001;
+const url = process.env.URL;
+
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static('dist'));
+
+const requestLogger = (req, _res, next) => {
+    console.log('Method:', req.method);
+    console.log('Path:', req.path);
+    console.log('Body:', req.body);
+    console.log('---');
+    next();
 };
 
 app.use(requestLogger);
 
-morgan.token('body', (req) => JSON.stringify(req.body));
-app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body'));
+mongoose.set('strictQuery', false);
 
-app.use(express.static(path.join(__dirname, 'dist'))); 
+mongoose.connect(url)
+    .then(() => {
+        console.log('Conectado a MongoDB');
+    })
+    .catch((err) => {
+        console.error('Error conectándose a MongoDB:', err.message);
+        process.exit(1);
+    });
 
-let persons = [
-  { id: 1, name: 'Arto Hellas', number: '040-123456' },
-  { id: 2, name: 'Ada Lovelace', number: '39-44-5323523' },
-  { id: 3, name: 'Dan Abramov', number: '12-43-234345' },
-  { id: 4, name: 'Mary Poppendieck', number: '39-23-6423122' }
-];
-
-app.get('/', (req, res) => {
-  res.send('<h1>Agenda Telefónica</h1>');
+  
+const personSchema = new mongoose.Schema({
+  name: String,
+  number: String,
 });
 
-app.get('/api/persons', (req, res) => {
-  res.json(persons);
+const Person = mongoose.model('Person', personSchema);
+    
+
+personSchema.set('toJSON', {
+    transform: (_document, returnedObject) => {
+        returnedObject.id = returnedObject._id.toString();
+        delete returnedObject._id;
+        delete returnedObject.__v;
+    },
 });
 
-app.get('/info', (req, res) => {
-  const totalPersons = persons.length;
-  const date = new Date();
-  res.send(`<p>Phonebook has info for ${totalPersons} people</p><p>${date}</p>`);
+
+
+
+app.get('/', (_req, res) => {
+    res.send('<h1>API REST FROM NOTES</h1>');
 });
 
-app.get('/api/persons/:id', (req, res) => {
-  const id = Number(req.params.id);
-  const person = persons.find(person => person.id === id);
-
-  if (person) {
-    res.json(person);
-  } else {
-    res.status(404).end();
-  }
+app.get('/persons', (_req, res) => {
+    Person.find({}).then(persons => {
+        res.json(persons);
+    });
 });
 
-app.put('/api/persons/:id', (req, res) => {
-  const id = Number(req.params.id);
-  const { name, number } = req.body;
-
-  const personIndex = persons.findIndex(person => person.id === id);
-  if (personIndex !== -1) {
-    const updatedPerson = { ...persons[personIndex], name, number };
-    persons[personIndex] = updatedPerson;
-    res.json(updatedPerson);
-  } else {
-    res.status(404).json({ error: 'Person not found' });
-  }
+app.delete('/persons/:id', (req, res) => {
+    const id = req.params.id;
+    Person.findByIdAndDelete(id)
+        .then(() => {
+            res.status(204).end();
+        })
+        .catch(err => {
+            console.error('Error al eliminar la persona:', err.message);
+            res.status(400).end();
+        });
 });
 
-app.delete('/api/persons/:id', (req, res) => {
-  const id = Number(req.params.id);
-  persons = persons.filter(person => person.id !== id);
+app.post('/persons', (req, res) => {
+    const body = req.body;
+    if (!body.name || !body.number) {
+        return res.status(400).json({
+            error: 'content missing'
+        });
+    }
 
-  res.status(204).end();
+    const note = {
+        name: body.name,
+        number: body.number
+    };
+
+    const person = new Person(note);
+    person.save().then(savedPerson => {
+        res.json(savedPerson);
+    });
 });
 
-const generateId = () => {
-  return Math.floor(Math.random() * 10000);
-};
-
-app.post('/api/persons', (req, res) => {
-  const { name, number } = req.body;
-
-  if (!name || !number) {
-    return res.status(400).json({ error: 'El nombre y el número son requeridos' });
-  }
-
-  if (persons.find(person => person.name === name)) {
-    return res.status(400).json({ error: 'El nombre ya existe en la agenda' });
-  }
-
-  const newPerson = {
-    id: generateId(),
-    name,
-    number
+app.put('/persons/:id', (req, res) => {
+  const id = req.params.id;
+  const body = req.body;
+  
+  const note = {
+    name: body.name,
+    number: body.number
   };
-
-  persons = persons.concat(newPerson);
-  res.json(newPerson);
+  
+  Person.findByIdAndUpdate(id, note, { new: true })
+    .then(updatedPerson => {
+      res.json(updatedPerson);
+    })
+    .catch(err => {
+      console.error('Error al actualizar la persona:', err.message);
+      res.status(400).end();
+    });
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
 });
